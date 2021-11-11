@@ -17,6 +17,32 @@ main {
     <!-- seafile_session_prepare (SeafileSession) -->
     <!-- seafile_session_start (SeafileSession) -->
     <!-- start_searpc_server -->
+    <!-- fuse_main -->
+}
+
+fuse_main {
+    <!-- IMPORTANT -->
+    <!-- connect fuse operations with relevant functions -->
+    <!-- seadrive_fuse_ops -->
+}
+
+struct seadrive_fuse_ops = {
+    .getattr = seadrive_fuse_getattr,
+    .readdir = seadrive_fuse_readdir,
+    .mknod = seadrive_fuse_mknod,
+    .mkdir = seadrive_fuse_mkdir,
+    .unlink = seadrive_fuse_unlink,
+    .rmdir = seadrive_fuse_rmdir,
+    .rename = seadrive_fuse_rename,
+    .open    = seadrive_fuse_open,
+    .read    = seadrive_fuse_read,
+    .write   = seadrive_fuse_write,
+    .release = seadrive_fuse_release,
+    .truncate = seadrive_fuse_truncate,
+    .statfs = seadrive_fuse_statfs,
+    .chmod = seadrive_fuse_chmod,
+    .utimens = seadrive_fuse_utimens,
+    .symlink = seadrive_fuse_symlink,
 }
 ------------------
 
@@ -142,12 +168,16 @@ FileCacheMgr
 new {
     fetch_file_worker thread pool {
         <!-- seaf_sync_manager_get_server_info (SeafSyncManager) -->
+        <!-- get repo_id (unique for each library) and file_path -->
         <!-- seaf_repo_manager_get_repo (SeafRepoManager) -->
         <!-- check if repo encrypted -->
         <!-- set repo tree path in repo -->
         <!-- seaf_fs_manager_get_seafile (SeafFSManager) -->
-        <!-- get cache block map from server. create if not availabe -->
-        <!-- download blocks from the repo -->
+        <!-- file_size, number of blocks, file_id -->
+        <!-- check if the file has multiple blocks and get cache block map from server. create if not availabe -->
+        <!-- calculate_block_offset -->
+        <!-- for each block in file -->
+        <!-- http_tx_manager_get_block -->
     }
 <!-- create file cache directory -->
 }
@@ -228,10 +258,85 @@ file_cache_mgr_write_by_path {
 }
 -------------------
 
-SeafFSManager
--------------------
-<!-- CDC_AVERAGE_BLOCK_SIZE (1 << 23) /* 8MB */ -->
-<!-- CDC_MIN_BLOCK_SIZE (6 * (1 << 20)) /* 6MB */ -->
-<!-- CDC_MAX_BLOCK_SIZE (10 * (1 << 20)) /* 10MB */ -->
 
+HttpTxManager
 -------------------
+<!-- handle http (webdav) connections with seafile server -->
+http_tx_manager_start {
+    <!-- almost nothing there -->  
+}
+http_tx_manager_get_block {
+    <!-- http://localhost:8080/seafhttp/repo/c8a458cb-3ea9-4e18-a6ed-d29666edc0ba/block/4a255e6fc8ec51ac4a9edc44c8e47eff45498d2e -->
+    <!-- Seafile-Repo-Token: 53a47fc55c501f0dead52d651925eb818d1d960e -->
+}
+fileserver_api_get_request {
+    <!-- http://localhost:8080/seafhttp/accessible-repos/?repo_id=c8a458cb-3ea9-4e18-a6ed-d29666edc0ba -->
+    <!-- Seafile-Repo-Token: 53a47fc55c501f0dead52d651925eb818d1d960e -->
+    <!-- [{"version":1,"id":"c8a458cb-3ea9-4e18-a6ed-d29666edc0ba","head_commit_id":"337a626bf749dad957fa8a9d358f10a4ec65dbf6","name":"My Library","mtime":1635450434,"permission":"rw","type":"repo","owner":"me@example.com"}] -->
+}
+------------------------------------------
+
+Structs
+------------------------------------------
+struct CachedFile {
+    <!-- Identifier(repo_id/file_path) for CachedFile in memory -->
+    char *file_key;
+    <!-- Record CachedFile open number -->
+    gint n_open;
+    <!-- Repo unique name used when get download progress -->
+    char *repo_uname;
+    <!-- Caculate download progress -->
+    gint64 downloaded;
+    gint64 total_download;
+    gboolean force_canceled;
+    gint64 last_cancel_time;
+}
+
+struct FileCacheMgrPriv {
+    <!-- Parent dir(seafile_dir/file_cache) to store cached files -->
+    char *base_path;
+    <!-- repo_id/file_path <-> CachedFile -->
+    GHashTable *cached_files;
+    pthread_mutex_t cache_lock;
+    GThreadPool *tpool;
+    <!-- repo_id/file_path <-> CachedFileHandle -->
+    GHashTable *cache_tasks;
+    pthread_mutex_t task_lock;
+    <!-- /* Cache block size list for files. */ -->
+    GHashTable *block_map_cache;
+    pthread_rwlock_t block_map_lock;
+    SeafTimer *clean_timer;
+    int clean_cache_interval;
+    gint64 cache_size_limit;
+    GQueue *downloaded_files;
+    pthread_mutex_t downloaded_files_lock;
+}
+
+struct CachedFileHandle {
+    struct CachedFile *cached_file;
+    pthread_mutex_t lock;
+    int fd;
+    SeafileCrypt *crypt;
+    BlockBuffer blk_buffer;
+    gint64 file_size;
+    gboolean is_readonly;
+    gboolean is_in_root;
+    gboolean fetch_canceled;
+
+    gint64 start_download_time;
+    gboolean notified_download_start;
+}
+
+struct _Seafile {
+    SeafFSObject object;
+    int         version;
+    char        file_id[41];
+    guint64     file_size;
+    guint32     n_blocks;
+    char        **blk_sha1s;
+    int         ref_count;
+}
+
+struct _SeafFSObject {
+    int type;
+};
