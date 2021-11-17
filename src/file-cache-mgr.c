@@ -449,6 +449,55 @@ calculate_block_offset (Seafile *file, gint64 *block_map, CachedFileHandle *hand
 
 #define CACHE_BLOCK_MAP_THRESHOLD 3000000 /* 3MB */
 
+void
+file_cache_mgr_stream (char *repo_id, char *file_path) {
+    SeafRepo *repo = NULL;
+    RepoTreeStat st;
+    HttpServerInfo *server_info = NULL;
+
+    printf("file_cache_mgr_test\n");
+
+    server_info = seaf_sync_manager_get_server_info (seaf->sync_mgr);
+    if (!server_info) {
+        printf ("Failed to get current server info.\n");
+        goto out;
+    }
+
+    repo = seaf_repo_manager_get_repo (seaf->repo_mgr, repo_id);
+        if (!repo) {
+        printf ("Failed to get repo %.8s.\n", repo_id);
+        goto out;
+    }
+
+    // assume not encrypted
+
+    if (repo_tree_stat_path (repo->tree, file_path, &st) < 0) {
+        printf ("Failed to stat repo tree path %s in repo %s.\n",
+                      file_path, repo_id);
+        goto out;
+    }
+
+    if (!seaf_fs_manager_object_exists (seaf->fs_mgr,
+                                        repo->id,
+                                        repo->version,
+                                        st.id)) {
+        if (http_tx_manager_get_fs_object (seaf->http_tx_mgr,
+                                           server_info->host,
+                                           server_info->use_fileserver_port,
+                                           repo->token,
+                                           repo->id,
+                                           st.id,
+                                           file_path) < 0) {
+            printf ("Failed to get file object %s from server %s.\n",
+                          st.id, server_info->host);
+            goto out;
+        }
+    }
+
+out:
+    printf("version: %d\n", repo->version);
+}
+
 static void
 fetch_file_worker (gpointer data, gpointer user_data)
 {
@@ -480,6 +529,7 @@ fetch_file_worker (gpointer data, gpointer user_data)
     key_comps = g_strsplit (file_handle->cached_file->file_key, "/", 2);
     repo_id = key_comps[0];
     file_path = key_comps[1];
+    // TODO ---------------------------------------------------------------------------------------------------------------------------------------------------
 
     ondisk_path = g_build_filename (priv->base_path, repo_id, file_path, NULL);
 
@@ -524,6 +574,7 @@ fetch_file_worker (gpointer data, gpointer user_data)
         goto out;
     }
 
+    // TODO if file has multiple blocks
     if (file->file_size >= CACHE_BLOCK_MAP_THRESHOLD) {
         pthread_rwlock_rdlock (&priv->block_map_lock);
         block_map = g_hash_table_lookup (priv->block_map_cache, st.id);
@@ -571,6 +622,8 @@ fetch_file_worker (gpointer data, gpointer user_data)
         seaf_util_lseek (file_handle->fd, file_offset, SEEK_SET);
     }
 
+    // TODO get all blocks
+    printf("fetch_file_worker %d from %d to %d-------------------\n", file_offset, block_offset, file->n_blocks);
     int i = block_offset;
     if (file_handle->crypt) {
         for (; i < file->n_blocks; i++) {
@@ -595,6 +648,7 @@ fetch_file_worker (gpointer data, gpointer user_data)
     } else {
         for (; i < file->n_blocks; i++) {
             http_status = 200;
+            printf("http_tx_manager_get_block %d \n", i);
             if (http_tx_manager_get_block (seaf->http_tx_mgr, server_info->host,
                                            server_info->use_fileserver_port, repo->token,
                                            repo->id, file->blk_sha1s[i],

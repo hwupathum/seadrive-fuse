@@ -136,3 +136,5 @@ src/seadrive
 /x64
 /.vs
 /*.vcxproj.user
+
+/.vscode

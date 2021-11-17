@@ -41,6 +41,16 @@ static void print_version ()
 #include <fuse_opt.h>
 
 #include "fuse-ops.h"
+#include "file-cache-mgr.h"
+
+// ================
+#include<string.h>	//strlen
+#include<stdlib.h>	//strlen
+#include<sys/socket.h>
+#include<arpa/inet.h>	//inet_addr
+#include<unistd.h>	//write
+#include<pthread.h> //for threading , link with lpthread
+// ================
 
 struct options {
     char *seafile_dir;
@@ -354,6 +364,108 @@ load_config_from_file (const char *config_file)
     g_key_file_free (key_file);
 }
 
+//the thread function
+void *connection_handler(void *);
+
+void *server_handler(void *p) {
+    int port = *(int*)p;
+
+	int socket_desc , client_sock , c , *new_sock;
+	struct sockaddr_in server , client;
+	
+	//Create socket
+	socket_desc = socket(AF_INET , SOCK_STREAM , 0);
+	if (socket_desc == -1)
+	{
+		printf("Could not create socket");
+	}
+	puts("Socket created");
+	
+	//Prepare the sockaddr_in structure
+	server.sin_family = AF_INET;
+	server.sin_addr.s_addr = INADDR_ANY;
+	server.sin_port = htons( port );
+	
+	//Bind
+	if( bind(socket_desc,(struct sockaddr *)&server , sizeof(server)) < 0) {
+		//print the error message
+		perror("bind failed. Error");
+		return 1;
+	}
+	puts("bind done");
+	
+	//Listen
+	listen(socket_desc , 3);
+	
+	//Accept and incoming connection
+	puts("Waiting for incoming connections...");
+	c = sizeof(struct sockaddr_in);
+	while( (client_sock = accept(socket_desc, (struct sockaddr *)&client, (socklen_t*)&c)) ) {
+		puts("Connection accepted");
+		
+		pthread_t sniffer_thread;
+		new_sock = malloc(1);
+		*new_sock = client_sock;
+		
+		if( pthread_create( &sniffer_thread , NULL ,  connection_handler , (void*) new_sock) < 0) {
+			perror("could not create thread");
+			return 1;
+		}
+		
+		//Now join the thread , so that we dont terminate before the thread
+		//pthread_join( sniffer_thread , NULL);
+		puts("Handler assigned");
+	}
+	
+	if (client_sock < 0) {
+		perror("accept failed");
+		return 1;
+	}
+	
+	return 0;
+}
+
+/*
+ * This will handle connection for each client
+ * */
+void *connection_handler(void *socket_desc) {
+	//Get the socket descriptor
+	int sock = *(int*)socket_desc;
+	int read_size;
+	char *message , client_message[2000];
+	
+	//Send some messages to the client
+	message = "Greetings! I am your connection handler\n";
+	write(sock , message , strlen(message));
+	
+	message = "Now type something and i shall repeat what you type \n";
+	write(sock , message , strlen(message));
+	
+	//Receive a message from client
+	while( (read_size = recv(sock , client_message , 2000 , 0)) > 0 ) {
+		//Send the message back to client
+        puts(client_message);
+        // TODO change here
+        // puts(read_size);
+        file_cache_mgr_stream ("c8a458cb-3ea9-4e18-a6ed-d29666edc0ba", "seafile-tutorial.doc");
+        printf("ok\n");
+		write(sock , client_message , read_size);
+	}
+	
+	if(read_size == 0) {
+		puts("Client disconnected");
+		fflush(stdout);
+	}
+	else if(read_size == -1) {
+		perror("recv failed");
+	}
+		
+	//Free the socket pointer
+	free(socket_desc);
+	
+	return 0;
+}
+
 int
 main (int argc, char **argv)
 {
@@ -497,10 +609,17 @@ main (int argc, char **argv)
 
     seaf_message ("rpc server started.\n");
 
+    pthread_t thread_id;
+    int port = 8000;
+
+    pthread_create(&thread_id, NULL, server_handler, &port);
+
     fuse_main(args.argc, args.argv, &seadrive_fuse_ops, NULL);
     fuse_opt_free_args (&args);
 
     seafile_curl_deinit();
+
+    pthread_join(thread_id, NULL);
 
     return 0;
 }

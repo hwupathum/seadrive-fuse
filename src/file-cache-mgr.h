@@ -39,6 +39,9 @@ file_cache_mgr_init (FileCacheMgr *mgr);
 void
 file_cache_mgr_start (FileCacheMgr *mgr);
 
+void
+file_cache_mgr_stream (char *repo_id, char *file_path);
+
 CachedFileHandle *
 file_cache_mgr_open (FileCacheMgr *mgr, const char *repo_id,
                      const char *file_path, int flags);
