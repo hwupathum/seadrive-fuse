@@ -449,13 +449,18 @@ calculate_block_offset (Seafile *file, gint64 *block_map, CachedFileHandle *hand
 
 #define CACHE_BLOCK_MAP_THRESHOLD 3000000 /* 3MB */
 
-void
+char *
 file_cache_mgr_stream (char *repo_id, char *file_path) {
     SeafRepo *repo = NULL;
     RepoTreeStat st;
+    Seafile *file = NULL;
     HttpServerInfo *server_info = NULL;
+    json_t *object, *block_id_array, *block_offset_array;
+    char *message = NULL;
+    gint64 *block_map = NULL;
+    int n_blocks = 0;
 
-    printf("file_cache_mgr_test\n");
+    printf("file_cache_mgr_stream\n");
 
     server_info = seaf_sync_manager_get_server_info (seaf->sync_mgr);
     if (!server_info) {
@@ -494,8 +499,58 @@ file_cache_mgr_stream (char *repo_id, char *file_path) {
         }
     }
 
+    file = seaf_fs_manager_get_seafile (seaf->fs_mgr, repo->id, repo->version, st.id);
+    if (!file) {
+        printf ("Failed to get file object %s in repo %s.\n",
+                      st.id, repo_id);
+        goto out;
+    }
+
+    if (http_tx_manager_get_file_block_map (seaf->http_tx_mgr,
+                                            server_info->host,
+                                            server_info->use_fileserver_port,
+                                            repo->token,
+                                            repo->id,
+                                            st.id,
+                                            &block_map,
+                                            &n_blocks) == 0) {
+        if (n_blocks != file->n_blocks) {
+            seaf_warning ("Block number return from server does not match"
+                            "seafile object. File-id is %s"
+                            "Returned %d, expect %d\n",
+                            st.id, n_blocks, file->n_blocks);
+        }
+    } else {
+        seaf_warning ("Failed to get block map for file object %s"
+                        "server %s.\n",
+                        st.id, server_info->host);
+    }
+
+    object = json_object ();
+
+    json_object_set_int_member (object, "size", file->file_size);
+    
+    block_id_array = json_array ();
+    int i;
+    for (i = 0; i < file->n_blocks; ++i) {
+        json_array_append_new (block_id_array, json_string(file->blk_sha1s[i]));
+    }
+    json_object_set_new (object, "block_ids", block_id_array);
+
+    block_offset_array = json_array ();
+    for (i = 0; i < file->n_blocks; ++i) {
+        json_array_append_new (block_offset_array, json_integer(block_map[i]));
+    }
+    json_object_set_new (object, "block_map", block_offset_array);
+
+    json_object_set_string_member(object, "file_id", st.id);
+    json_object_set_string_member(object, "host", server_info->host);
+    json_object_set_string_member(object, "token", repo->token);
+
+    message = json_dumps (object, JSON_SORT_KEYS);
+    json_decref (object);
 out:
-    printf("version: %d\n", repo->version);
+    return message;
 }
 
 static void
@@ -529,7 +584,6 @@ fetch_file_worker (gpointer data, gpointer user_data)
     key_comps = g_strsplit (file_handle->cached_file->file_key, "/", 2);
     repo_id = key_comps[0];
     file_path = key_comps[1];
-    // TODO ---------------------------------------------------------------------------------------------------------------------------------------------------
 
     ondisk_path = g_build_filename (priv->base_path, repo_id, file_path, NULL);
 
@@ -574,6 +628,7 @@ fetch_file_worker (gpointer data, gpointer user_data)
         goto out;
     }
 
+    // TODO ---------------------------------------------------------------------------------------------------------------------------------------------------
     // TODO if file has multiple blocks
     if (file->file_size >= CACHE_BLOCK_MAP_THRESHOLD) {
         pthread_rwlock_rdlock (&priv->block_map_lock);

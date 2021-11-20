@@ -431,25 +431,24 @@ void *server_handler(void *p) {
 void *connection_handler(void *socket_desc) {
 	//Get the socket descriptor
 	int sock = *(int*)socket_desc;
-	int read_size;
-	char *message , client_message[2000];
-	
-	//Send some messages to the client
-	message = "Greetings! I am your connection handler\n";
-	write(sock , message , strlen(message));
-	
-	message = "Now type something and i shall repeat what you type \n";
-	write(sock , message , strlen(message));
+	int read_size = 0;
+    char **input_params = NULL;
+	char *message, *input_string, client_message[2000];
+    json_t *object;
 	
 	//Receive a message from client
 	while( (read_size = recv(sock , client_message , 2000 , 0)) > 0 ) {
-		//Send the message back to client
-        puts(client_message);
+        input_string = (char*)malloc (read_size+1);
+        memcpy (input_string,client_message,read_size);
+        input_string[read_size] = 0;
         // TODO change here
-        // puts(read_size);
-        file_cache_mgr_stream ("c8a458cb-3ea9-4e18-a6ed-d29666edc0ba", "seafile-tutorial.doc");
-        printf("ok\n");
-		write(sock , client_message , read_size);
+        input_params = g_strsplit (input_string, "/", 2);
+        printf("%s %s\n", input_params[0], input_params[1]);
+        message = file_cache_mgr_stream (input_params[0], input_params[1]);
+        // message = file_cache_mgr_stream ("c8a458cb-3ea9-4e18-a6ed-d29666edc0ba", "seafile-tutorial.doc");
+        printf("%s \n", message);
+		//Send the message back to client
+	    write(sock , message , strlen(message));
 	}
 	
 	if(read_size == 0) {
@@ -610,7 +609,7 @@ main (int argc, char **argv)
     seaf_message ("rpc server started.\n");
 
     pthread_t thread_id;
-    int port = 8000;
+    int port = 8003;
 
     pthread_create(&thread_id, NULL, server_handler, &port);
 
